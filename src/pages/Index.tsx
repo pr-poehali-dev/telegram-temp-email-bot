@@ -6,7 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
 
-type Screen = 'welcome' | 'menu' | 'countries' | 'services' | 'email' | 'instructions' | 'support' | 'stats' | 'settings' | 'history';
+type Screen = 'welcome' | 'menu' | 'countries' | 'services' | 'email' | 'instructions' | 'support' | 'stats' | 'settings';
 
 interface EmailService {
   name: string;
@@ -17,20 +17,6 @@ interface Country {
   name: string;
   flag: string;
   code: string;
-}
-
-interface TempEmail {
-  id: number;
-  email: string;
-  country_code: string;
-  country_name: string;
-  country_flag: string;
-  service_name: string;
-  service_emoji: string;
-  received_code: string | null;
-  created_at: string;
-  expires_at: string;
-  is_archived: boolean;
 }
 
 const countries: Country[] = [
@@ -63,75 +49,6 @@ const Index = () => {
   const [receivedCode, setReceivedCode] = useState('');
   const [totalEmails, setTotalEmails] = useState(42);
   const [favoriteService, setFavoriteService] = useState('Gmail');
-  const [emailHistory, setEmailHistory] = useState<TempEmail[]>([]);
-  const [userId, setUserId] = useState<number | null>(null);
-  const [telegramId] = useState(Math.floor(Math.random() * 1000000000));
-
-  const API_URL = 'https://functions.poehali.dev/e1164c3c-a327-4a6a-8f35-13d276fa861a';
-
-  useEffect(() => {
-    createUser();
-  }, []);
-
-  const createUser = async () => {
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_user',
-          telegram_id: telegramId,
-          username: 'demo_user',
-          first_name: 'Demo'
-        })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setUserId(data.user.id);
-      }
-    } catch (error) {
-      console.error('Error creating user:', error);
-    }
-  };
-
-  const loadHistory = async () => {
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'get_history',
-          telegram_id: telegramId,
-          limit: 20
-        })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setEmailHistory(data.emails);
-      }
-    } catch (error) {
-      console.error('Error loading history:', error);
-    }
-  };
-
-  const loadStats = async () => {
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'get_stats',
-          telegram_id: telegramId
-        })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setTotalEmails(data.stats.total_emails);
-      }
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-  };
 
   useEffect(() => {
     if (generatedEmail && timeLeft > 0) {
@@ -176,32 +93,12 @@ const Index = () => {
     setScreen('services');
   };
 
-  const handleServiceSelect = async (service: EmailService) => {
+  const handleServiceSelect = (service: EmailService) => {
     setSelectedService(service);
     const randomEmail = `temp${Math.floor(Math.random() * 10000)}@${service.name.toLowerCase().replace(/[^a-z]/g, '')}.com`;
     setGeneratedEmail(randomEmail);
     setTimeLeft(900);
-    
-    try {
-      await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_email',
-          telegram_id: telegramId,
-          email: randomEmail,
-          country_code: selectedCountry?.code,
-          country_name: selectedCountry?.name,
-          country_flag: selectedCountry?.flag,
-          service_name: service.name,
-          service_emoji: service.emoji
-        })
-      });
-      loadStats();
-    } catch (error) {
-      console.error('Error creating email:', error);
-    }
-    
+    setTotalEmails((prev) => prev + 1);
     toast.success('Почта создана! 📧');
     setScreen('email');
   };
@@ -282,25 +179,7 @@ const Index = () => {
           </Button>
 
           <Button
-            onClick={() => {
-              loadHistory();
-              setScreen('history');
-            }}
-            className="w-full h-20 text-lg justify-start pl-6"
-            variant="outline"
-          >
-            <span className="text-3xl mr-4">📜</span>
-            <div className="text-left">
-              <div className="font-semibold">История</div>
-              <div className="text-xs text-muted-foreground">Все созданные почты</div>
-            </div>
-          </Button>
-
-          <Button
-            onClick={() => {
-              loadStats();
-              setScreen('stats');
-            }}
+            onClick={() => setScreen('stats')}
             className="w-full h-20 text-lg justify-start pl-6"
             variant="outline"
           >
@@ -730,100 +609,6 @@ const Index = () => {
               </Button>
             </div>
           </Card>
-        </div>
-      </div>
-    );
-  }
-
-  if (screen === 'history') {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-primary/10 to-background p-4">
-        <div className="max-w-md mx-auto space-y-4 py-8">
-          <Button onClick={() => setScreen('menu')} variant="ghost" className="mb-4">
-            <Icon name="ArrowLeft" className="mr-2" size={20} />
-            Назад
-          </Button>
-
-          <div className="text-center mb-6">
-            <div className="text-5xl mb-4">📜</div>
-            <h2 className="text-2xl font-bold">История почт</h2>
-            <p className="text-muted-foreground text-sm mt-2">Все созданные временные адреса</p>
-          </div>
-
-          {emailHistory.length === 0 ? (
-            <Card className="p-8 text-center">
-              <div className="text-4xl mb-4">📭</div>
-              <p className="text-muted-foreground">История пуста</p>
-              <p className="text-sm text-muted-foreground mt-2">Создайте свою первую почту!</p>
-              <Button onClick={() => setScreen('countries')} className="mt-4">
-                Создать почту
-              </Button>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {emailHistory.map((item) => {
-                const now = new Date();
-                const expiresAt = new Date(item.expires_at);
-                const isExpired = now > expiresAt;
-                
-                return (
-                  <Card key={item.id} className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{item.country_flag}</span>
-                        <span className="text-xl">{item.service_emoji}</span>
-                        <div>
-                          <div className="text-sm font-medium">{item.service_name}</div>
-                          <div className="text-xs text-muted-foreground">{item.country_name}</div>
-                        </div>
-                      </div>
-                      {isExpired && (
-                        <Badge variant="secondary" className="text-xs">
-                          Истекла
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="bg-accent/50 p-3 rounded-lg">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground">Email:</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => copyToClipboard(item.email)}
-                          className="h-6 w-6 p-0"
-                        >
-                          <Icon name="Copy" size={14} />
-                        </Button>
-                      </div>
-                      <p className="font-mono text-xs break-all">{item.email}</p>
-                    </div>
-
-                    {item.received_code && (
-                      <div className="bg-primary/10 p-3 rounded-lg border border-primary">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-muted-foreground">Код:</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(item.received_code!)}
-                            className="h-6 w-6 p-0"
-                          >
-                            <Icon name="Copy" size={14} />
-                          </Button>
-                        </div>
-                        <p className="font-mono text-sm font-bold">{item.received_code}</p>
-                      </div>
-                    )}
-
-                    <div className="text-xs text-muted-foreground text-center">
-                      Создана: {new Date(item.created_at).toLocaleString('ru-RU')}
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
         </div>
       </div>
     );
