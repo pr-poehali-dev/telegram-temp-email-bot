@@ -1,0 +1,36 @@
+{
+  "tests": [
+    {
+      "name": "Create user",
+      "method": "POST",
+      "body": {
+        "action": "create_user",
+        "telegram_id": 123456789,
+        "username": "testuser",
+        "first_name": "Test"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "success": true,
+        "user": {
+          "telegram_id": 123456789
+        }
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Update subscription status",
+      "method": "POST",
+      "body": {
+        "action": "update_subscription",
+        "telegram_id": 123456789,
+        "is_subscribed": true
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "success": true
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
