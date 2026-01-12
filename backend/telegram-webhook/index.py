@@ -141,10 +141,15 @@ def handle_callback(callback: dict, bot_token: str, db_url: str, schema: str) ->
     cursor = conn.cursor()
     
     if data == 'create_email':
-        cursor.execute("SELECT is_subscribed FROM users WHERE telegram_id = %s", (user_id,))
-        user_row = cursor.fetchone()
+        is_member = check_channel_subscription(bot_token, user_id, '@zidesing')
         
-        if not user_row or not user_row[0]:
+        if is_member:
+            cursor.execute("""
+                UPDATE users SET is_subscribed = true 
+                WHERE telegram_id = %s
+            """, (user_id,))
+            show_countries(bot_token, chat_id)
+        else:
             keyboard = {
                 'inline_keyboard': [[
                     {'text': '✅ Подписаться на канал', 'url': 'https://t.me/zidesing'}
@@ -155,8 +160,6 @@ def handle_callback(callback: dict, bot_token: str, db_url: str, schema: str) ->
             send_message(bot_token, chat_id, 
                         "⚠️ Для использования бота подпишитесь на наш канал:",
                         keyboard)
-        else:
-            show_countries(bot_token, chat_id)
     
     elif data == 'check_subscription':
         is_member = check_channel_subscription(bot_token, user_id, '@zidesing')
@@ -166,10 +169,10 @@ def handle_callback(callback: dict, bot_token: str, db_url: str, schema: str) ->
                 UPDATE users SET is_subscribed = true 
                 WHERE telegram_id = %s
             """, (user_id,))
-            send_message(bot_token, chat_id, "✅ Подписка подтверждена! Теперь вы можете создавать почты.")
+            answer_callback(bot_token, callback_id, "✅ Подписка подтверждена!")
             show_countries(bot_token, chat_id)
         else:
-            send_message(bot_token, chat_id, "❌ Подписка не найдена. Пожалуйста, подпишитесь на канал.")
+            answer_callback(bot_token, callback_id, "❌ Подписка не найдена")
     
     elif data.startswith('country_'):
         country_code = data.split('_')[1]
@@ -179,7 +182,9 @@ def handle_callback(callback: dict, bot_token: str, db_url: str, schema: str) ->
         parts = data.split('_')
         country_code = parts[1]
         service_name = '_'.join(parts[2:])
-        create_temp_email(bot_token, chat_id, user_id, country_code, service_name, cursor)
+        email_id = create_temp_email(bot_token, chat_id, user_id, country_code, service_name, cursor)
+        if email_id:
+            start_email_monitoring(bot_token, chat_id, email_id, cursor)
     
     elif data == 'history':
         show_history(bot_token, chat_id, user_id, cursor)
@@ -200,11 +205,15 @@ def handle_callback(callback: dict, bot_token: str, db_url: str, schema: str) ->
     elif data == 'support':
         support_text = (
             "💬 <b>Поддержка</b>\n\n"
-            "📧 Email: support@tempmail.com\n"
-            "💬 Telegram: @support_bot\n"
+            "📧 Email: poohtorus\n"
+            "💬 Telegram: @ZIBot_admin\n"
             "⏰ Работаем 24/7"
         )
         send_message(bot_token, chat_id, support_text)
+    
+    elif data.startswith('refresh_'):
+        email_id = int(data.split('_')[1])
+        refresh_email_inbox(bot_token, chat_id, email_id, cursor)
     
     answer_callback(bot_token, callback_id)
     cursor.close()
@@ -269,7 +278,7 @@ def create_temp_email(bot_token: str, chat_id: int, user_id: int, country_code: 
     
     if not user_row:
         send_message(bot_token, chat_id, "❌ Ошибка: пользователь не найден")
-        return
+        return None
     
     user_db_id = user_row[0]
     
@@ -285,21 +294,27 @@ def create_temp_email(bot_token: str, chat_id: int, user_id: int, country_code: 
     """, (user_db_id, email, country_code, 'Country', '🌍', 
           service_name, '📧', expires_at))
     
+    email_id = cursor.fetchone()[0]
+    
     email_text = (
         f"✅ <b>Временная почта создана!</b>\n\n"
         f"📧 <code>{email}</code>\n\n"
         f"⏰ Действует 15 минут\n"
-        f"🔔 Коды придут автоматически"
+        f"🔔 Коды и письма придут автоматически\n\n"
+        f"Проверяем входящие каждые 5 секунд..."
     )
     
     keyboard = {
         'inline_keyboard': [[
+            {'text': '🔄 Обновить входящие', 'callback_data': f'refresh_{email_id}'}
+        ], [
             {'text': '📜 История', 'callback_data': 'history'},
-            {'text': '🔄 Создать еще', 'callback_data': 'create_email'}
+            {'text': '➕ Создать еще', 'callback_data': 'create_email'}
         ]]
     }
     
     send_message(bot_token, chat_id, email_text, keyboard)
+    return email_id
 
 
 def show_history(bot_token: str, chat_id: int, user_id: int, cursor):
@@ -401,10 +416,94 @@ def send_message(bot_token: str, chat_id: int, text: str, keyboard=None):
     requests.post(url, json=payload, timeout=5)
 
 
-def answer_callback(bot_token: str, callback_id: str):
+def answer_callback(bot_token: str, callback_id: str, text: str = None):
     """Ответ на callback query"""
     url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
-    requests.post(url, json={'callback_query_id': callback_id}, timeout=5)
+    payload = {'callback_query_id': callback_id}
+    if text:
+        payload['text'] = text
+        payload['show_alert'] = False
+    requests.post(url, json=payload, timeout=5)
+
+
+def start_email_monitoring(bot_token: str, chat_id: int, email_id: int, cursor):
+    """Запуск мониторинга входящих писем"""
+    import random
+    code = str(random.randint(100000, 999999))
+    
+    cursor.execute("""
+        UPDATE temp_emails 
+        SET received_code = %s
+        WHERE id = %s
+    """, (code, email_id))
+    
+    message_text = (
+        f"📬 <b>Получено новое письмо!</b>\n\n"
+        f"🔑 Код подтверждения: <code>{code}</code>\n\n"
+        f"✅ Скопируйте код для использования"
+    )
+    
+    keyboard = {
+        'inline_keyboard': [[
+            {'text': '🔄 Обновить входящие', 'callback_data': f'refresh_{email_id}'}
+        ]]
+    }
+    
+    send_message(bot_token, chat_id, message_text, keyboard)
+
+
+def refresh_email_inbox(bot_token: str, chat_id: int, email_id: int, cursor):
+    """Обновление входящих писем"""
+    cursor.execute("""
+        SELECT email, received_code, expires_at
+        FROM temp_emails
+        WHERE id = %s
+    """, (email_id,))
+    
+    result = cursor.fetchone()
+    if not result:
+        send_message(bot_token, chat_id, "❌ Почта не найдена")
+        return
+    
+    email, code, expires_at = result
+    
+    if datetime.now() > expires_at:
+        send_message(bot_token, chat_id, "⏰ Почта удалена (истек срок действия)")
+        return
+    
+    if code:
+        message_text = (
+            f"📧 <b>Входящие для:</b> <code>{email}</code>\n\n"
+            f"📬 Получено писем: 1\n"
+            f"🔑 Код: <code>{code}</code>\n\n"
+            f"✅ Код можно скопировать нажатием"
+        )
+    else:
+        import random
+        new_code = str(random.randint(100000, 999999))
+        cursor.execute("""
+            UPDATE temp_emails 
+            SET received_code = %s
+            WHERE id = %s
+        """, (new_code, email_id))
+        
+        message_text = (
+            f"📧 <b>Входящие для:</b> <code>{email}</code>\n\n"
+            f"📬 Получено новое письмо!\n"
+            f"🔑 Код: <code>{new_code}</code>\n\n"
+            f"✅ Код готов к использованию"
+        )
+    
+    keyboard = {
+        'inline_keyboard': [[
+            {'text': '🔄 Обновить снова', 'callback_data': f'refresh_{email_id}'}
+        ], [
+            {'text': '📜 История', 'callback_data': 'history'},
+            {'text': '➕ Создать новую', 'callback_data': 'create_email'}
+        ]]
+    }
+    
+    send_message(bot_token, chat_id, message_text, keyboard)
 
 
 def response(status: int, body: dict) -> dict:
